@@ -264,5 +264,5 @@ extern NSString *const TKStateMachineDidTerminateNotification;
 typedef enum {
     TKInvalidTransitionError    =   1000,   // An invalid transition was attempted.
     TKTransitionDeclinedError   =   1001,   // The transition was declined by the `shouldFireEvent` guard block.
-    TKStateMachineTerminatedError = 1002,   // The transition was declines because the state machine has already terminated.
+    TKStateMachineTerminatedError = 1002,   // The transition failed because the state machine has reached a terminal state.
 } TKErrorCode;
