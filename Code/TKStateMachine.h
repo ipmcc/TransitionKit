@@ -77,6 +77,13 @@
 @property (nonatomic, strong, readonly) TKState *currentState;
 
 /**
+ The set of states which are terminal, and will cause the state machine to terminate
+ 
+ Once an event transitions the machine into one of the states in this set, the machine will return YES from -terminated and will refuse to accept any further events.
+ */
+@property (nonatomic, copy) NSSet *terminalStates;
+
+/**
  Adds a state to the receiver.
  
  Before a state can be used in an event, it must be registered with the state machine.
@@ -176,6 +183,15 @@
  */
 - (BOOL)isActive;
 
+///------------------------------------
+/// @name Terminal State of the Machine
+///------------------------------------
+
+/**
+ Returns a Boolean value that indicates if the receiver has transitioned into one of the states in `terminalStates`.
+ */
+@property (nonatomic, readonly) BOOL terminated;
+
 ///--------------------
 /// @name Firing Events
 ///--------------------
@@ -237,9 +253,16 @@ extern NSString *const TKStateMachineDidChangeStateEventUserInfoKey;
 extern NSString *const TKStateMachineIsImmutableException;
 
 /**
+ A Notification posted when the `terminated` state of a `TKStateMachine` changes to YES
+ */
+extern NSString *const TKStateMachineDidChangeStateNotification;
+
+
+/**
  Error Codes
  */
 typedef enum {
     TKInvalidTransitionError    =   1000,   // An invalid transition was attempted.
     TKTransitionDeclinedError   =   1001,   // The transition was declined by the `shouldFireEvent` guard block.
+    TKStateMachineTerminatedError = 1002,   // The transition was declines because the state machine has already terminated.
 } TKErrorCode;

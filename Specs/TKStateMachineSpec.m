@@ -25,6 +25,7 @@
 @property (nonatomic, assign, getter = isHappy) BOOL happy;
 @property (nonatomic, assign, getter = isLookingForLove) BOOL lookingForLove;
 @property (nonatomic, assign, getter = isDepressed) BOOL depressed;
+@property (nonatomic, assign, getter = isDead) BOOL dead;
 @property (nonatomic, assign, getter = isConsultingLawyer) BOOL consultingLawyer;
 @property (nonatomic, assign, getter = wasPreviouslyMarried) BOOL previouslyMarried;
 @property (nonatomic, assign, getter = isWillingToGiveUpHalfOfEverything) BOOL willingToGiveUpHalfOfEverything;
@@ -52,9 +53,21 @@ context(@"when initialized", ^{
     it(@"has no states", ^{
         [[stateMachine.states should] haveCountOf:0];
     });
+
+    it(@"is not active", ^{
+        [[@(stateMachine.isActive) should] beNo];
+    });
     
+    it(@"is not terminated", ^{
+        [[@(stateMachine.terminated) should] beNo];
+    });
+    
+    it(@"has no terminal states", ^{
+        [[stateMachine.terminalStates should] haveCountOf:0];
+    });
+
     it(@"has a nil initial state", ^{
-        [stateMachine.initialState shouldBeNil];
+        [[stateMachine.initialState should] beNil];
     });
     
     it(@"has no events", ^{
@@ -84,6 +97,31 @@ context(@"when initialized", ^{
         
         it(@"sets the initial state to the newly added state", ^{
             [[stateMachine.initialState should] equal:state];
+        });
+    });
+    
+    context(@"and a terminal state is added", ^{
+        __block TKState *state = nil;
+        
+        beforeEach(^{
+            state = [TKState stateWithName:@"Dead"];
+            [stateMachine setTerminalStates: [NSSet setWithObject: state]];
+        });
+        
+        it(@"has a terminalStates count of 1", ^{
+            [[stateMachine.terminalStates should] haveCountOf:1];
+        });
+        
+        it(@"contains the terminalState that was added", ^{
+            [[stateMachine.terminalStates should] contain:state];
+        });
+        
+        it(@"adds the terminalState to the main state list too", ^{
+            [[stateMachine.states should] contain:state];
+        });
+
+        it(@"does NOT set the initial state to the newly added terminalState", ^{
+            [[state shouldNot] equal: stateMachine.initialState];
         });
     });
     
@@ -129,13 +167,16 @@ context(@"when initialized", ^{
 context(@"when a state machine is copied", ^{
     __block TKState *firstState;
     __block TKState *secondState;
+    __block TKState *lastState;
     __block TKEvent *event;
     __block TKStateMachine *copiedStateMachine;
     
     beforeEach(^{
         firstState = [TKState stateWithName:@"First"];
         secondState = [TKState stateWithName:@"Second"];
+        lastState = [TKState stateWithName:@"Last"];
         [stateMachine addStates:@[ firstState, secondState ]];
+        stateMachine.terminalStates = [NSSet setWithObject: lastState];
         event = [TKEvent eventWithName:@"Event" transitioningFromStates:@[ firstState ] toState:secondState];
         [stateMachine addEvent:event];
         
@@ -150,11 +191,18 @@ context(@"when a state machine is copied", ^{
     });
     
     it(@"copies all states", ^{
-        [[copiedStateMachine.states should] haveCountOf:2];
+        [[copiedStateMachine.states should] haveCountOf:3];
         [[copiedStateMachine.states shouldNot] contain:firstState];
         [[copiedStateMachine.states shouldNot] contain:secondState];
+        [[copiedStateMachine.states shouldNot] contain:lastState];
     });
     
+    it(@"copies terminal states", ^{
+        [[copiedStateMachine.terminalStates should] haveCountOf:1];
+        [[copiedStateMachine.terminalStates shouldNot] contain:lastState];
+        [[copiedStateMachine.terminalStates should] contain: [copiedStateMachine stateNamed: lastState.name]];
+    });
+
     it(@"copies all events", ^{
         [[copiedStateMachine.events should] haveCountOf:1];
         [[copiedStateMachine.events shouldNot] contain:event];
@@ -165,8 +213,13 @@ context(@"when a state machine is copied", ^{
     });
     
     it(@"has a `nil` current state", ^{
-        [copiedStateMachine.currentState shouldBeNil];
+        [[copiedStateMachine.currentState should] beNil];
     });
+    
+    it(@"is not terminated", ^{
+        [[@(copiedStateMachine.terminated) should] beNo];
+    });
+
 });
 
 context(@"when a state machine is serialized", ^{
@@ -191,7 +244,7 @@ describe(@"setting the initial state", ^{
         });
         
         it(@"does not have a current state", ^{
-            [stateMachine.currentState shouldBeNil];
+            [[stateMachine.currentState should] beNil];
         });
         
         context(@"and then is started", ^{
@@ -223,6 +276,51 @@ describe(@"addState:", ^{
     });
 });
 
+describe(@"setInitialState:", ^{
+    context(@"when given an object that is not a TKState", ^{
+        it(@"raises an NSInvalidArgumentException", ^{
+            [[theBlock(^{
+                [stateMachine setInitialState:(TKState *)@1234];
+            }) should] raiseWithName:NSInvalidArgumentException reason:@"Expected a `TKState` object, instead got a `__NSCFNumber` (1234)"];
+        });
+    });
+});
+
+describe(@"setTerminalStates:", ^{
+    context(@"when given an object that is not an NSSet", ^{
+        it(@"raises an NSInvalidArgumentException", ^{
+            [[theBlock(^{
+                [stateMachine setTerminalStates:(NSSet *)@1234];
+            }) should] raiseWithName:NSInvalidArgumentException reason:@"Expected an `NSSet` object specifying the terminal states, instead got a `__NSCFNumber` (1234)"];
+        });
+    });
+});
+
+describe(@"setTerminalStates:", ^{
+    context(@"when given a set containing an object that is not a TKState", ^{
+        it(@"raises an NSInvalidArgumentException", ^{
+            [[theBlock(^{
+                [stateMachine setTerminalStates: [NSSet setWithObject: @1234]];
+            }) should] raiseWithName:NSInvalidArgumentException reason:@"Expected an `NSSet` of `TKState` objects, but the set contains a `__NSCFNumber` (1234)"];
+        });
+    });
+});
+
+describe(@"setTerminalStates:", ^{
+    context(@"when given nil", ^{
+        stateMachine.terminalStates = nil;
+        [[stateMachine.terminalStates should] beNonNil];
+        [[stateMachine.terminalStates should] haveCountOf: 0];
+        [[stateMachine.terminalStates should] beMemberOfClass: [NSSet class]];
+        it(@"raises an NSInvalidArgumentException", ^{
+            [[theBlock(^{
+                [stateMachine setTerminalStates: [NSSet setWithObject: @1234]];
+            }) should] raiseWithName:NSInvalidArgumentException reason:@"Expected an `NSSet` of `TKState` objects, but the set contains a `__NSCFNumber` (1234)"];
+        });
+    });
+});
+
+
 describe(@"isInState:", ^{
     context(@"when given an object that is not a TKState or an NSString", ^{
         it(@"raises an NSInvalidArgumentException", ^{
@@ -244,12 +342,17 @@ describe(@"isInState:", ^{
 describe(@"fireEvent:userInfo:error", ^{
     __block TKState *singleState;
     __block TKState *datingState;
+    __block TKState *deadState;
 
     beforeEach(^{
         singleState = [TKState stateWithName:@"Single"];
         datingState = [TKState stateWithName:@"Dating"];
+        deadState = [TKState stateWithName:@"Dead"];
         [stateMachine addStates:@[ singleState, datingState ]];
+        stateMachine.terminalStates = [NSSet setWithObject:deadState];
         [stateMachine addEvent:[TKEvent eventWithName:@"Break Up" transitioningFromStates:@[ datingState ] toState:singleState]];
+        [stateMachine addEvent:[TKEvent eventWithName:@"Death" transitioningFromStates:nil toState:deadState]];
+        [stateMachine addEvent:[TKEvent eventWithName:@"Resurrection" transitioningFromStates: @[ deadState ] toState: singleState]];
         stateMachine.initialState = [stateMachine stateNamed:@"Dating"];
         [stateMachine activate];
     });
@@ -270,6 +373,60 @@ describe(@"fireEvent:userInfo:error", ^{
         [[blockTransition.event.name should] equal:@"Break Up"];
     });
 
+    it(@"does not transition into a terminated state after entering a non-terminal state", ^{
+        NSError *error = nil;
+        BOOL success = [stateMachine fireEvent:@"Break Up" userInfo:nil error:&error];
+        [[theValue(success) should] beTrue];
+        
+        BOOL terminated = stateMachine.terminated;
+        [[theValue(terminated) should] beFalse];
+    });
+
+    it(@"transitions into a terminated state after entering a terminal state", ^{
+        NSError *error = nil;
+        BOOL success = [stateMachine fireEvent:@"Death" userInfo:nil error:&error];
+        [[theValue(success) should] beTrue];
+        [[error should] beNil];
+
+        BOOL terminated = stateMachine.terminated;
+        [[theValue(terminated) should] beTrue];        
+    });
+
+    it(@"should refuse further events after being terminated", ^{
+        NSError *error = nil;
+        BOOL success = [stateMachine fireEvent:@"Death" userInfo:nil error:&error];
+        [[theValue(success) should] beTrue];
+        [[error should] beNil];
+
+        BOOL terminated = stateMachine.terminated;
+        [[theValue(terminated) should] beTrue];
+
+        BOOL canFire = [stateMachine canFireEvent: @"Resurrection"];
+        [[theValue(canFire) should] beFalse];
+        
+        success = [stateMachine fireEvent:@"Resurrection" userInfo:nil error: &error];
+        [[theValue(success) should] beFalse];
+        [[error should] beNonNil];
+        [[error.domain should] equal: TKErrorDomain];
+        [[@(error.code) should] equal: @(TKStateMachineTerminatedError)];
+    });
+    
+    it(@"should send a notification when entering a terminal state", ^{
+        __block NSNotification *notification = nil;
+        id observer = [[NSNotificationCenter defaultCenter] addObserverForName:TKStateMachineDidChangeStateNotification object:stateMachine queue:nil usingBlock:^(NSNotification *note) {
+            notification = note;
+        }];
+        
+        NSError *error = nil;
+        BOOL success = [stateMachine fireEvent:@"Death" userInfo:nil error:&error];
+
+        [[theValue(success) should] beTrue];
+        [[error should] beNil];
+        [[expectFutureValue(notification) shouldEventually] beNonNil];
+        [[NSNotificationCenter defaultCenter] removeObserver:observer];
+    });
+
+
     context(@"with userInfo", ^{
         it(@"includes the userInfo in the transition", ^{
             __block TKTransition *blockTransition;
@@ -289,6 +446,20 @@ describe(@"fireEvent:userInfo:error", ^{
             [[NSNotificationCenter defaultCenter] removeObserver:observer];
             [[notification.userInfo[@"songPlayingOnRepeat"] should] equal:@"What is love, when you don't hurt me?"];
         });
+
+        it(@"merges the userInfo when posting the notification for termination", ^{
+            __block NSNotification *notification = nil;
+            id observer = [[NSNotificationCenter defaultCenter] addObserverForName:TKStateMachineDidChangeStateNotification object:stateMachine queue:nil usingBlock:^(NSNotification *note) {
+                notification = note;
+            }];
+            
+            [stateMachine fireEvent:@"Death" userInfo:@{ @"reason for death" : @"heartbreak" } error: NULL];
+            [[expectFutureValue(notification) shouldEventually] beNonNil];
+            [[notification.userInfo[@"reason for death"] should] equal:@"heartbreak"];
+            [[NSNotificationCenter defaultCenter] removeObserver:observer];
+        });
+
+        
     });
 });
 
@@ -297,10 +468,12 @@ describe(@"A State Machine Modeling Dating", ^{
     __block TKState *singleState;
     __block TKState *datingState;
     __block TKState *marriedState;
+    __block TKState *deadState;
     __block TKEvent *startDating;
     __block TKEvent *breakup;
     __block TKEvent *getMarried;
     __block TKEvent *divorce;
+    __block TKEvent *die;
     
     beforeEach(^{
         person = [TKSpecPerson new];
@@ -321,7 +494,10 @@ describe(@"A State Machine Modeling Dating", ^{
             person.happy = NO;
         }];
         marriedState = [TKState stateWithName:@"Married"];
+        deadState = [TKState stateWithName: @"Dead"];
+
         [stateMachine addStates:@[ singleState, datingState, marriedState ]];
+        stateMachine.terminalStates = [NSSet setWithObject: deadState];
         
         startDating = [TKEvent eventWithName:@"Start Dating" transitioningFromStates:@[ singleState ] toState:datingState];
         [startDating setDidFireEventBlock:^(TKEvent *event, TKTransition *transition) {
@@ -345,8 +521,11 @@ describe(@"A State Machine Modeling Dating", ^{
             [person startDrinkingHeavily];
             [person startTryingToPickUpCollegeGirls];
         }];
-        
-        [stateMachine addEvents:@[ startDating, breakup, getMarried, divorce ]];
+        die = [TKEvent eventWithName:@"Die" transitioningFromStates: nil toState: deadState];
+        [die setDidFireEventBlock:^(TKEvent *event, TKTransition *transition) {
+            person.dead = YES;
+        }];
+        [stateMachine addEvents:@[ startDating, breakup, getMarried, divorce, die ]];
     });
     
     context(@"when a Single Person Starts Dating", ^{
@@ -368,7 +547,7 @@ describe(@"A State Machine Modeling Dating", ^{
         it(@"returns a nil error", ^{
             NSError *error = nil;
             [stateMachine fireEvent:@"Start Dating" userInfo:nil error:&error];
-            [error shouldBeNil];
+            [[error should]  beNil];
         });
         
         it(@"is no longer looking for love", ^{
@@ -391,7 +570,7 @@ describe(@"A State Machine Modeling Dating", ^{
             [stateMachine fireEvent:@"Start Dating" userInfo:nil error:nil];
             [[expectFutureValue(notification) shouldEventually] beNonNil];
             [[NSNotificationCenter defaultCenter] removeObserver:observer];
-            [notification.userInfo shouldNotBeNil];
+            [[notification.userInfo should] beNonNil];
             [[[[notification.userInfo objectForKey:TKStateMachineDidChangeStateOldStateUserInfoKey] name] should] equal:@"Single"];
             [[[[notification.userInfo objectForKey:TKStateMachineDidChangeStateNewStateUserInfoKey] name] should] equal:@"Dating"];
             [[[[notification.userInfo objectForKey:TKStateMachineDidChangeStateEventUserInfoKey] name] should] equal:@"Start Dating"];
@@ -538,6 +717,22 @@ describe(@"A State Machine Modeling Dating", ^{
                 [[[error localizedFailureReason] should] equal:@"An attempt was made to fire the 'Break Up' event while in the 'Single' state, but the event can only be fired from the following states: Dating"];
             });
         });
+    });
+    
+    context(@"when a Dead Person tries to do anything", ^{
+        beforeEach(^{
+            stateMachine.initialState = [stateMachine stateNamed:@"Dead"];
+        });
+        
+        it(@"cannot be fired", ^{
+            [[@([stateMachine canFireEvent:@"Get Married"]) should] beNo];
+        });
+        
+        it(@"is terminated", ^{
+            [stateMachine activate];
+            [[@(stateMachine.terminated) should] beYes];
+        });
+        
     });
     
     context(@"when a Single Person tries to Get Married", ^{

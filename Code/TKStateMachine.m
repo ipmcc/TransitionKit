@@ -41,6 +41,7 @@ NSString *const TKStateMachineDidChangeStateNotification = @"TKStateMachineDidCh
 NSString *const TKStateMachineDidChangeStateOldStateUserInfoKey = @"old";
 NSString *const TKStateMachineDidChangeStateNewStateUserInfoKey = @"new";
 NSString *const TKStateMachineDidChangeStateEventUserInfoKey = @"event";
+NSString *const TKStateMachineDidTerminateNotification = @"TKStateMachineDidTerminateNotification";
 
 NSString *const TKStateMachineIsImmutableException = @"TKStateMachineIsImmutableException";
 
@@ -56,6 +57,7 @@ static NSString *TKQuoteString(NSString *string)
 @property (nonatomic, strong) NSMutableSet *mutableStates;
 @property (nonatomic, strong) NSMutableSet *mutableEvents;
 @property (nonatomic, assign, getter = isActive) BOOL active;
+@property (nonatomic) BOOL terminated;
 @property (nonatomic, strong, readwrite) TKState *currentState;
 @end
 
@@ -73,6 +75,10 @@ static NSString *TKQuoteString(NSString *string)
         NSSet *affectingKey = [NSSet setWithObject:@"mutableEvents"];
         keyPaths = [keyPaths setByAddingObjectsFromSet:affectingKey];
         return keyPaths;
+    } else if ([key isEqualToString:@"terminated"]) {
+        NSSet *affectingKey = [NSSet setWithObject:@"currentState"];
+        keyPaths = [keyPaths setByAddingObjectsFromSet:affectingKey];
+        return keyPaths;
     }
     
     return keyPaths;
@@ -82,8 +88,9 @@ static NSString *TKQuoteString(NSString *string)
 {
     self = [super init];
     if (self) {
-        self.mutableStates = [NSMutableSet set];
-        self.mutableEvents = [NSMutableSet set];
+        _mutableStates = [NSMutableSet set];
+        _mutableEvents = [NSMutableSet set];
+        _terminalStates = [NSSet set];
     }
     return self;
 }
@@ -98,7 +105,33 @@ static NSString *TKQuoteString(NSString *string)
 - (void)setInitialState:(TKState *)initialState
 {
     TKRaiseIfActive();
+    if (! [initialState isKindOfClass:[TKState class]]) [NSException raise:NSInvalidArgumentException format:@"Expected a `TKState` object, instead got a `%@` (%@)", [initialState class], initialState];
     _initialState = initialState;
+}
+
+- (void)setTerminalStates:(NSSet*)terminalStates
+{
+    TKRaiseIfActive();
+    
+    if (terminalStates && ! [terminalStates isKindOfClass: [NSSet class]]) [NSException raise:NSInvalidArgumentException format:@"Expected an `NSSet` object specifying the terminal states, instead got a `%@` (%@)", [terminalStates class], terminalStates];
+
+    for (TKState* state in terminalStates)
+    {
+        if (! [state isKindOfClass:[TKState class]]) [NSException raise:NSInvalidArgumentException format:@"Expected an `NSSet` of `TKState` objects, but the set contains a `%@` (%@)", [state class], state];
+    }
+    
+    [self.mutableStates unionSet: terminalStates];
+
+    _terminalStates = terminalStates ? [NSSet setWithSet: terminalStates] : [NSSet set];
+}
+
+- (void)setCurrentState: (TKState*)newCurrentState
+{
+    _currentState = newCurrentState;
+    if ([self.terminalStates containsObject: newCurrentState])
+    {
+        self.terminated = YES;
+    }
 }
 
 - (NSSet *)states
@@ -109,7 +142,7 @@ static NSString *TKQuoteString(NSString *string)
 - (void)addState:(TKState *)state
 {
     TKRaiseIfActive();
-    if (! [state isKindOfClass:[TKState class]]) [NSException raise:NSInvalidArgumentException format:@"Expected a `TKState` object, instead got a `%@` (%@)", [state class], state];
+    if (! [state isKindOfClass:[TKState class]]) [NSException raise:NSInvalidArgumentException format:@"Expected a `TKState` object or `NSString` object specifying the name of a state, instead got a `%@` (%@)", [state class], state];
     if (self.initialState == nil) self.initialState = state;
     [self.mutableStates addObject:state];
 }
@@ -190,7 +223,7 @@ static NSString *TKQuoteString(NSString *string)
     if (! [eventOrEventName isKindOfClass:[TKEvent class]] && ![eventOrEventName isKindOfClass:[NSString class]]) [NSException raise:NSInvalidArgumentException format:@"Expected a `TKEvent` object or `NSString` object specifying the name of an event, instead got a `%@` (%@)", [eventOrEventName class], eventOrEventName];
     TKEvent *event = [eventOrEventName isKindOfClass:[TKEvent class]] ? eventOrEventName : [self eventNamed:eventOrEventName];
     if (! event) [NSException raise:NSInvalidArgumentException format:@"Cannot find an Event named '%@'", eventOrEventName];
-    return [event.sourceStates containsObject:self.currentState];
+    return !self.terminated && (event.sourceStates == nil || [event.sourceStates containsObject:self.currentState]);
 }
 
 - (BOOL)fireEvent:(id)eventOrEventName userInfo:(NSDictionary *)userInfo error:(NSError *__autoreleasing *)error
@@ -200,6 +233,17 @@ static NSString *TKQuoteString(NSString *string)
     TKEvent *event = [eventOrEventName isKindOfClass:[TKEvent class]] ? eventOrEventName : [self eventNamed:eventOrEventName];
     if (! event) [NSException raise:NSInvalidArgumentException format:@"Cannot find an Event named '%@'", eventOrEventName];
 
+    if (self.terminated)
+    {
+        if (error)
+        {
+            NSString *failureReason = [NSString stringWithFormat:@"An attempt was made to fire the '%@' event after the state machine has terminated.", event.name];
+            NSDictionary *userInfo = @{ NSLocalizedDescriptionKey: @"The event cannot be fired because the state machine has reached a terminal state", NSLocalizedFailureReasonErrorKey: failureReason };
+            *error = [NSError errorWithDomain:TKErrorDomain code:TKStateMachineTerminatedError userInfo:userInfo];
+        }
+        return NO;
+    }
+    
     // Check that this transition is permitted
     if (event.sourceStates != nil && ![event.sourceStates containsObject:self.currentState]) {
         NSString *failureReason = [NSString stringWithFormat:@"An attempt was made to fire the '%@' event while in the '%@' state, but the event can only be fired from the following states: %@", event.name, self.currentState.name, [[event.sourceStates valueForKey:@"name"] componentsJoinedByString:@", "]];
@@ -237,6 +281,11 @@ static NSString *TKQuoteString(NSString *string)
                                                   TKStateMachineDidChangeStateEventUserInfoKey: event }];
     [[NSNotificationCenter defaultCenter] postNotificationName:TKStateMachineDidChangeStateNotification object:self userInfo:notificationInfo];
     
+    if(self.terminated)
+    {
+        [[NSNotificationCenter defaultCenter] postNotificationName:TKStateMachineDidTerminateNotification object:self userInfo:userInfo];
+    }
+    
     return YES;
 }
 
@@ -254,6 +303,8 @@ static NSString *TKQuoteString(NSString *string)
     self.mutableStates = [[aDecoder decodeObjectForKey:@"states"] mutableCopy];
     self.mutableEvents = [[aDecoder decodeObjectForKey:@"events"] mutableCopy];
     self.active = [aDecoder decodeBoolForKey:@"isActive"];
+    self.terminalStates = [aDecoder decodeObjectForKey: @"terminalStates"];
+    self.terminated = [aDecoder decodeBoolForKey: @"terminated"];
     return self;
 }
 
@@ -264,6 +315,8 @@ static NSString *TKQuoteString(NSString *string)
     [aCoder encodeObject:self.states forKey:@"states"];
     [aCoder encodeObject:self.events forKey:@"events"];
     [aCoder encodeBool:self.isActive forKey:@"isActive"];
+    [aCoder encodeObject:self.terminalStates forKey: @"terminalStates"];
+    [aCoder encodeBool:self.terminated forKey:@"terminated"];
 }
 
 #pragma mark - NSCopying
@@ -272,6 +325,7 @@ static NSString *TKQuoteString(NSString *string)
 {
     TKStateMachine *copiedStateMachine = [[[self class] allocWithZone:zone] init];
     copiedStateMachine.active = NO;
+    copiedStateMachine.terminated = NO;
     copiedStateMachine.currentState = nil;
     copiedStateMachine.initialState = self.initialState;
     
@@ -279,6 +333,12 @@ static NSString *TKQuoteString(NSString *string)
         [copiedStateMachine addState:[state copy]];
     }
     
+    NSMutableSet* terminalStates = [NSMutableSet setWithCapacity: self.terminalStates.count];
+    for (TKState *state in self.terminalStates) {
+        [terminalStates addObject: [copiedStateMachine stateNamed: state.name]];
+    }
+    copiedStateMachine.terminalStates = terminalStates;
+
     for (TKEvent *event in self.events) {
         NSMutableArray *sourceStates = [NSMutableArray arrayWithCapacity:[event.sourceStates count]];
         for (TKState *sourceState in event.sourceStates) {
@@ -288,6 +348,7 @@ static NSString *TKQuoteString(NSString *string)
         TKEvent *copiedEvent = [TKEvent eventWithName:event.name transitioningFromStates:sourceStates toState:destinationState];
         [copiedStateMachine addEvent:copiedEvent];
     }
+    
     return copiedStateMachine;
 }
 
