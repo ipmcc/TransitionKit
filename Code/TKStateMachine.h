@@ -255,7 +255,7 @@ extern NSString *const TKStateMachineIsImmutableException;
 /**
  A Notification posted when the `terminated` state of a `TKStateMachine` changes to YES
  */
-extern NSString *const TKStateMachineDidChangeStateNotification;
+extern NSString *const TKStateMachineDidTerminateNotification;
 
 
 /**
